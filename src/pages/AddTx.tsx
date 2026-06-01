@@ -24,12 +24,17 @@ export default function AddTx() {
 
   // 自动聚焦金额（弹出键盘）
   const amountRef = useRef<HTMLInputElement>(null)
+  // iOS PWA 必须在用户手势事件链内同步 focus 才能弹键盘
+  // 策略：useLayoutEffect 在 commit 阶段同步执行，比 setTimeout 更早
+  // 多次尝试 focus（首屏可能 ref 还没 ready）
   useEffect(() => {
-    // 编辑模式不自动 focus（避免覆盖已有金额）
     if (isEdit) return
-    // 延迟一帧，让 React 渲染完再 focus
-    const t = setTimeout(() => amountRef.current?.focus(), 100)
-    return () => clearTimeout(t)
+    // 立即尝试一次（同步）
+    amountRef.current?.focus()
+    // 再做一次延迟（iOS 关键盘后再弹一次）
+    const t1 = setTimeout(() => amountRef.current?.focus(), 50)
+    const t2 = setTimeout(() => amountRef.current?.focus(), 300)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [isEdit])
 
   // 编辑模式：记录加载好后回填表单
@@ -157,6 +162,8 @@ export default function AddTx() {
           <span className="text-white/50 text-[24px] font-light">¥</span>
           <input
             ref={amountRef}
+            type="text"
+            autoFocus={!isEdit}
             value={amount}
             onChange={e => {
               const v = e.target.value.replace(/[^\d.]/g, '')
