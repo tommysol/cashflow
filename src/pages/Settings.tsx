@@ -66,6 +66,16 @@ export default function Settings() {
         <p className="text-white/40 text-[12px] mt-1">CashFlow · 个人消费管理</p>
       </div>
 
+      {/* 数据安全提示 */}
+      <div className="mx-6 mb-5 p-3.5 rounded-[12px] flex items-start gap-2.5"
+        style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.15)' }}>
+        <span className="text-[13px] mt-0.5">💡</span>
+        <p className="text-white/70 text-[12px] leading-relaxed">
+          数据保存在浏览器本地。Safari 长期不打开 PWA 可能清理数据，<b>建议每周点下方"导出备份"</b>到 iCloud Drive。
+          已自动启用本地双重备份兜底（IndexedDB + localStorage），但仍建议定期手动导出。
+        </p>
+      </div>
+
       {/* Stats */}
       <div className="mx-6 mb-5 p-5 rounded-[16px] border border-white/[.06] flex justify-around"
         style={{ background: 'rgba(255,255,255,0.03)' }}>

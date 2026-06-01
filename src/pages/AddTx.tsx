@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { store, useStore } from '../store'
 import { categoryKind, fmt, getCurrentPeriod, getCurrentYearRange, inRange, todayStr } from '../utils'
@@ -22,6 +22,16 @@ export default function AddTx() {
   const [note, setNote] = useState('')
   const [date, setDate] = useState(todayStr())
 
+  // 自动聚焦金额（弹出键盘）
+  const amountRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    // 编辑模式不自动 focus（避免覆盖已有金额）
+    if (isEdit) return
+    // 延迟一帧，让 React 渲染完再 focus
+    const t = setTimeout(() => amountRef.current?.focus(), 100)
+    return () => clearTimeout(t)
+  }, [isEdit])
+
   // 编辑模式：记录加载好后回填表单
   useEffect(() => {
     if (editingTx) {
@@ -37,12 +47,22 @@ export default function AddTx() {
   const typeCats = categories.filter(c => c.type === type)
   const currentCat = typeCats.find(c => c.id === categoryId)
 
-  // 收集所有子分类（带反向映射）：[{ subName, catId, catName, color }]
-  const subShortcuts = useMemo(() => {
-    const list: { sub: string; catId: string; catName: string; color: string }[] = []
+  // 快速选择项：合并"子分类"和"无子分类的一级分类"
+  // - 有子分类的大类：展开为子分类 chip
+  // - 无子分类的大类：本身作为 chip（如月度工资/年终奖）
+  type Shortcut =
+    | { kind: 'sub'; key: string; label: string; catId: string; catName: string; color: string; sub: string }
+    | { kind: 'cat'; key: string; label: string; catId: string; catName: string; color: string }
+
+  const shortcuts = useMemo<Shortcut[]>(() => {
+    const list: Shortcut[] = []
     for (const c of typeCats) {
-      for (const s of c.subcategories) {
-        list.push({ sub: s, catId: c.id, catName: c.name, color: c.color })
+      if (c.subcategories.length === 0) {
+        list.push({ kind: 'cat', key: 'c:' + c.id, label: c.name, catId: c.id, catName: c.name, color: c.color })
+      } else {
+        for (const s of c.subcategories) {
+          list.push({ kind: 'sub', key: 's:' + c.id + ':' + s, label: s, catId: c.id, catName: c.name, color: c.color, sub: s })
+        }
       }
     }
     return list
@@ -90,10 +110,15 @@ export default function AddTx() {
     nav(-1)
   }
 
-  // 选子分类时：自动联动一级分类
-  const pickSub = (s: { sub: string; catId: string }) => {
-    setCategoryId(s.catId)
-    setSubcategory(s.sub)
+  // 选快捷项：自动联动
+  const pickShortcut = (s: Shortcut) => {
+    if (s.kind === 'sub') {
+      setCategoryId(s.catId)
+      setSubcategory(s.sub)
+    } else {
+      setCategoryId(s.catId)
+      setSubcategory('')
+    }
   }
 
   return (
@@ -131,6 +156,7 @@ export default function AddTx() {
         <div className="flex items-baseline justify-center gap-1">
           <span className="text-white/50 text-[24px] font-light">¥</span>
           <input
+            ref={amountRef}
             value={amount}
             onChange={e => {
               const v = e.target.value.replace(/[^\d.]/g, '')
@@ -147,17 +173,21 @@ export default function AddTx() {
           style={{ background: 'linear-gradient(90deg, transparent, rgba(129,140,248,0.4), transparent)' }} />
       </div>
 
-      {/* 子分类直选（核心快捷入口） */}
-      {subShortcuts.length > 0 && (
-        <div className="px-6 mb-5">
-          <p className="text-white/50 text-[12px] mb-3 tracking-wide">快速选择</p>
+      {/* 快速选择：子分类 + 无子分类的大类 一体化展示 */}
+      <div className="px-6 mb-5">
+        <p className="text-white/50 text-[12px] mb-3 tracking-wide">分类</p>
+        {shortcuts.length === 0 ? (
+          <p className="text-white/30 text-[13px]">还没有{type === 'expense' ? '支出' : '收入'}分类，去设置中添加</p>
+        ) : (
           <div className="flex flex-wrap gap-2">
-            {subShortcuts.map(s => {
-              const active = categoryId === s.catId && subcategory === s.sub
+            {shortcuts.map(s => {
+              const active = s.kind === 'sub'
+                ? (categoryId === s.catId && subcategory === s.sub)
+                : (categoryId === s.catId && !subcategory)
               return (
                 <button
-                  key={s.catId + ':' + s.sub}
-                  onClick={() => pickSub(s)}
+                  key={s.key}
+                  onClick={() => pickShortcut(s)}
                   className="px-3.5 py-2 rounded-2xl text-[13px] border transition-all flex items-center gap-1.5"
                   style={
                     active
@@ -171,44 +201,12 @@ export default function AddTx() {
                   }
                 >
                   <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
-                  {s.sub}
+                  {s.label}
                 </button>
               )
             })}
           </div>
-        </div>
-      )}
-
-      {/* 一级分类（无子分类的、或想直接记到大类时用） */}
-      <div className="px-6 mb-5">
-        <p className="text-white/50 text-[12px] mb-3 tracking-wide">
-          {subShortcuts.length > 0 ? '或选大类' : '分类'}
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {typeCats.length === 0 && (
-            <p className="text-white/30 text-[13px]">还没有{type === 'expense' ? '支出' : '收入'}分类，去设置中添加</p>
-          )}
-          {typeCats.map(c => {
-            const active = categoryId === c.id && !subcategory
-            return (
-              <button
-                key={c.id}
-                onClick={() => { setCategoryId(c.id); setSubcategory('') }}
-                className="px-4 py-2 rounded-full text-[13px] border transition-all"
-                style={
-                  active
-                    ? {
-                        background: 'linear-gradient(135deg, #6366F1, #8B5CF6)',
-                        borderColor: 'rgba(129,140,248,0.3)',
-                        color: '#fff', fontWeight: 500,
-                        boxShadow: '0 2px 8px rgba(99,102,241,0.25)',
-                      }
-                    : { background: 'rgba(255,255,255,0.05)', borderColor: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)' }
-                }
-              >{c.name}</button>
-            )
-          })}
-        </div>
+        )}
       </div>
 
       {/* 已选反馈条 */}
