@@ -12,8 +12,8 @@ import CategoryManager from './pages/CategoryManager'
 export default function App() {
   useEffect(() => { bootstrap() }, [])
   const { pathname } = useLocation()
-  // 记账页和分类管理页不显示底部 tab（更聚焦）
-  const hideTab = pathname === '/add' || pathname === '/categories'
+  // 记账/编辑/分类管理页不显示底部 tab（更聚焦）
+  const hideTab = pathname === '/add' || pathname.startsWith('/edit/') || pathname === '/categories'
 
   return (
     <div className="min-h-screen w-full bg-gradient-bg" style={{ background: 'linear-gradient(180deg, #0F0F1A 0%, #1A1A2E 100%)' }}>
@@ -21,6 +21,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/add" element={<AddTx />} />
+          <Route path="/edit/:id" element={<AddTx />} />
           <Route path="/list" element={<TxList />} />
           <Route path="/budget" element={<BudgetPage />} />
           <Route path="/settings" element={<Settings />} />

@@ -1,13 +1,20 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { store, useStore } from '../store'
 import { categoryKind, fmt, getCurrentPeriod, getCurrentYearRange, inRange, todayStr } from '../utils'
 import { uid } from '../db'
-import type { TxType } from '../types'
+import type { Transaction, TxType } from '../types'
 
 export default function AddTx() {
   const nav = useNavigate()
+  const { id: editId } = useParams<{ id?: string }>()
+  const isEdit = !!editId
+
   const { categories, budgets, transactions, settings } = useStore(s => s)
+
+  // 找到正在编辑的记录
+  const editingTx = isEdit ? transactions.find(t => t.id === editId) : null
+
   const [type, setType] = useState<TxType>('expense')
   const [amount, setAmount] = useState('')
   const [categoryId, setCategoryId] = useState('')
@@ -15,8 +22,31 @@ export default function AddTx() {
   const [note, setNote] = useState('')
   const [date, setDate] = useState(todayStr())
 
+  // 编辑模式：记录加载好后回填表单
+  useEffect(() => {
+    if (editingTx) {
+      setType(editingTx.type)
+      setAmount(String(editingTx.amount))
+      setCategoryId(editingTx.categoryId)
+      setSubcategory(editingTx.subcategory || '')
+      setNote(editingTx.note || '')
+      setDate(editingTx.date)
+    }
+  }, [editingTx?.id])
+
   const typeCats = categories.filter(c => c.type === type)
   const currentCat = typeCats.find(c => c.id === categoryId)
+
+  // 收集所有子分类（带反向映射）：[{ subName, catId, catName, color }]
+  const subShortcuts = useMemo(() => {
+    const list: { sub: string; catId: string; catName: string; color: string }[] = []
+    for (const c of typeCats) {
+      for (const s of c.subcategories) {
+        list.push({ sub: s, catId: c.id, catName: c.name, color: c.color })
+      }
+    }
+    return list
+  }, [typeCats])
 
   // 当前分类的预算/目标提示
   const budgetHint = useMemo(() => {
@@ -26,28 +56,44 @@ export default function AddTx() {
     const range = b.period === 'monthly' ? getCurrentPeriod(settings) : getCurrentYearRange(settings)
     const spent = transactions
       .filter(t => t.categoryId === categoryId)
+      // 编辑时排除当前记录原值，保证提示准确
+      .filter(t => t.id !== editId)
       .filter(t => inRange(t.date, range))
       .reduce((s, t) => s + t.amount, 0)
     const remaining = b.amount - spent
     const pct = (spent / b.amount) * 100
     return { remaining, total: b.amount, pct, period: b.period, kind: categoryKind(currentCat), spent }
-  }, [categoryId, budgets, transactions, settings, currentCat])
+  }, [categoryId, budgets, transactions, settings, currentCat, editId])
 
   const canSave = !!amount && Number(amount) > 0 && !!categoryId
 
   async function handleSave() {
     if (!canSave) return
-    await store.upsertTransaction({
-      id: uid(),
+    const tx: Transaction = {
+      id: editingTx?.id || uid(),
       type,
       amount: Number(amount),
       categoryId,
       subcategory: subcategory || undefined,
       note: note || undefined,
       date,
-      createdAt: Date.now(),
-    })
+      createdAt: editingTx?.createdAt || Date.now(),
+    }
+    await store.upsertTransaction(tx)
     nav(-1)
+  }
+
+  async function handleDelete() {
+    if (!editingTx) return
+    if (!confirm('确认删除这条记录？')) return
+    await store.removeTransaction(editingTx.id)
+    nav(-1)
+  }
+
+  // 选子分类时：自动联动一级分类
+  const pickSub = (s: { sub: string; catId: string }) => {
+    setCategoryId(s.catId)
+    setSubcategory(s.sub)
   }
 
   return (
@@ -57,7 +103,7 @@ export default function AddTx() {
         <button onClick={() => nav(-1)} className="text-white/60">
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
         </button>
-        <h2 className="text-white text-[17px] font-semibold">记一笔</h2>
+        <h2 className="text-white text-[17px] font-semibold">{isEdit ? '编辑记录' : '记一笔'}</h2>
         <div style={{ width: 24 }} />
       </div>
 
@@ -101,15 +147,49 @@ export default function AddTx() {
           style={{ background: 'linear-gradient(90deg, transparent, rgba(129,140,248,0.4), transparent)' }} />
       </div>
 
-      {/* Category */}
+      {/* 子分类直选（核心快捷入口） */}
+      {subShortcuts.length > 0 && (
+        <div className="px-6 mb-5">
+          <p className="text-white/50 text-[12px] mb-3 tracking-wide">快速选择</p>
+          <div className="flex flex-wrap gap-2">
+            {subShortcuts.map(s => {
+              const active = categoryId === s.catId && subcategory === s.sub
+              return (
+                <button
+                  key={s.catId + ':' + s.sub}
+                  onClick={() => pickSub(s)}
+                  className="px-3.5 py-2 rounded-2xl text-[13px] border transition-all flex items-center gap-1.5"
+                  style={
+                    active
+                      ? {
+                          background: `linear-gradient(135deg, ${s.color}66, ${s.color}99)`,
+                          borderColor: `${s.color}88`,
+                          color: '#fff', fontWeight: 500,
+                          boxShadow: `0 2px 8px ${s.color}40`,
+                        }
+                      : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.7)' }
+                  }
+                >
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ background: s.color }} />
+                  {s.sub}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* 一级分类（无子分类的、或想直接记到大类时用） */}
       <div className="px-6 mb-5">
-        <p className="text-white/50 text-[12px] mb-3 tracking-wide">分类</p>
+        <p className="text-white/50 text-[12px] mb-3 tracking-wide">
+          {subShortcuts.length > 0 ? '或选大类' : '分类'}
+        </p>
         <div className="flex flex-wrap gap-2">
           {typeCats.length === 0 && (
             <p className="text-white/30 text-[13px]">还没有{type === 'expense' ? '支出' : '收入'}分类，去设置中添加</p>
           )}
           {typeCats.map(c => {
-            const active = categoryId === c.id
+            const active = categoryId === c.id && !subcategory
             return (
               <button
                 key={c.id}
@@ -131,26 +211,19 @@ export default function AddTx() {
         </div>
       </div>
 
-      {/* Subcategory */}
-      {currentCat && currentCat.subcategories.length > 0 && (
+      {/* 已选反馈条 */}
+      {currentCat && (
         <div className="px-6 mb-5">
-          <p className="text-white/50 text-[12px] mb-3 tracking-wide">子分类</p>
-          <div className="flex flex-wrap gap-2">
-            {currentCat.subcategories.map(s => {
-              const active = subcategory === s
-              return (
-                <button
-                  key={s}
-                  onClick={() => setSubcategory(active ? '' : s)}
-                  className="px-3.5 py-2 rounded-2xl text-[13px] border transition-all"
-                  style={
-                    active
-                      ? { background: 'rgba(167,139,250,0.15)', borderColor: 'rgba(167,139,250,0.3)', color: '#C4B5FD', fontWeight: 500 }
-                      : { background: 'rgba(255,255,255,0.04)', borderColor: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.6)' }
-                  }
-                >{s}</button>
-              )
-            })}
+          <div className="px-3 py-2 rounded-lg flex items-center gap-2 text-[12px]"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ background: currentCat.color }} />
+            <span className="text-white/70">{currentCat.name}</span>
+            {subcategory && (
+              <>
+                <span className="text-white/30">›</span>
+                <span className="text-white/85">{subcategory}</span>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -183,7 +256,6 @@ export default function AddTx() {
       {budgetHint && type === 'expense' && (() => {
         const isGoal = budgetHint.kind === 'goal'
         const periodText = budgetHint.period === 'monthly' ? '月' : '年'
-        // 配色
         let bg: string, border: string, dot: string, color: string, text: string
         if (isGoal) {
           if (budgetHint.pct >= 100) {
@@ -213,8 +285,8 @@ export default function AddTx() {
         )
       })()}
 
-      {/* Save */}
-      <div className="px-6 pb-10">
+      {/* Save / Delete */}
+      <div className="px-6 pb-10 flex flex-col gap-3">
         <button
           onClick={handleSave}
           disabled={!canSave}
@@ -224,7 +296,15 @@ export default function AddTx() {
               ? { background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff', boxShadow: '0 4px 20px rgba(99,102,241,0.35)' }
               : { background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.3)' }
           }
-        >保存</button>
+        >{isEdit ? '保存修改' : '保存'}</button>
+
+        {isEdit && (
+          <button
+            onClick={handleDelete}
+            className="w-full py-3 rounded-[14px] text-[14px] font-medium border"
+            style={{ background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.2)', color: '#F87171' }}
+          >删除这条记录</button>
+        )}
       </div>
     </div>
   )

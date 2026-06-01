@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { store, useStore } from '../store'
+import { Link } from 'react-router-dom'
+import { useStore } from '../store'
 import {
   fmt, formatDateLabel, getCurrentPeriod, getPeriodByAnchor, inRange,
   recentAnchors, subEmoji, todayStr,
@@ -132,14 +133,10 @@ function FilterChip({ active, onClick, children }: { active: boolean, onClick: (
 
 function TxRow({ t, categories }: { t: Transaction, categories: any[] }) {
   const cat = categories.find(c => c.id === t.categoryId)
-  const handleDelete = () => {
-    if (confirm('删除这条记录？')) store.removeTransaction(t.id)
-  }
   return (
-    <div
-      onDoubleClick={handleDelete}
-      onContextMenu={e => { e.preventDefault(); handleDelete() }}
-      className="flex justify-between items-center px-4 py-3 rounded-[12px] border border-white/[.05]"
+    <Link
+      to={`/edit/${t.id}`}
+      className="flex justify-between items-center px-4 py-3 rounded-[12px] border border-white/[.05] active:scale-[0.98] transition-transform"
       style={{ background: 'rgba(255,255,255,0.03)' }}
     >
       <div className="flex items-center gap-3">
@@ -160,6 +157,6 @@ function TxRow({ t, categories }: { t: Transaction, categories: any[] }) {
       <span className={`text-[15px] font-semibold ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>
         {t.type === 'income' ? '+' : '-'}{fmt(t.amount)}
       </span>
-    </div>
+    </Link>
   )
 }

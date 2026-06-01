@@ -134,7 +134,8 @@ export default function Home() {
 function TxRow({ t, categories }: { t: Transaction, categories: any[] }) {
   const cat = categories.find(c => c.id === t.categoryId)
   return (
-    <div className="flex justify-between items-center px-4 py-3 rounded-[12px] border border-white/[.05]"
+    <Link to={`/edit/${t.id}`}
+      className="flex justify-between items-center px-4 py-3 rounded-[12px] border border-white/[.05] active:scale-[0.98] transition-transform"
       style={{ background: 'rgba(255,255,255,0.03)' }}
     >
       <div className="flex items-center gap-3">
@@ -155,6 +156,6 @@ function TxRow({ t, categories }: { t: Transaction, categories: any[] }) {
       <span className={`text-[14px] font-semibold ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>
         {t.type === 'income' ? '+' : '-'}{fmt(t.amount)}
       </span>
-    </div>
+    </Link>
   )
 }
