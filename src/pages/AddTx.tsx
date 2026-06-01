@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { store, useStore } from '../store'
-import { fmt, getCurrentPeriod, getCurrentYearRange, inRange, todayStr } from '../utils'
+import { categoryKind, fmt, getCurrentPeriod, getCurrentYearRange, inRange, todayStr } from '../utils'
 import { uid } from '../db'
 import type { TxType } from '../types'
 
@@ -30,8 +30,8 @@ export default function AddTx() {
       .reduce((s, t) => s + t.amount, 0)
     const remaining = b.amount - spent
     const pct = (spent / b.amount) * 100
-    return { remaining, total: b.amount, pct, period: b.period, kind: b.kind, spent }
-  }, [categoryId, budgets, transactions, settings])
+    return { remaining, total: b.amount, pct, period: b.period, kind: categoryKind(currentCat), spent }
+  }, [categoryId, budgets, transactions, settings, currentCat])
 
   const canSave = !!amount && Number(amount) > 0 && !!categoryId
 

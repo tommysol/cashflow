@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useStore } from '../store'
 import {
-  fmt, formatDateLabel, getCurrentPeriod, getCurrentYearRange, inRange,
+  categoryKind, fmt, formatDateLabel, getCurrentPeriod, getCurrentYearRange, inRange,
   kindLabel, kindSpentLabel, progressVisual, subEmoji,
 } from '../utils'
 import type { Transaction } from '../types'
@@ -17,14 +17,8 @@ export default function Home() {
   const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
   const expenseAll = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
 
-  // "投资/存款"识别：靠该分类是否有 goal 类型 budget；如果用户没设，回退用名称识别
-  const goalCatIds = new Set<string>()
-  for (const b of budgets) if (b.kind === 'goal') goalCatIds.add(b.categoryId)
-  for (const c of categories) {
-    if (c.type === 'expense' && (c.name.includes('投资') || c.name.includes('存款') || c.name.includes('储蓄'))) {
-      goalCatIds.add(c.id)
-    }
-  }
+  // 投资/存款分类：直接由分类名决定
+  const goalCatIds = new Set(categories.filter(c => categoryKind(c) === 'goal').map(c => c.id))
   const invest = monthTxs.filter(t => goalCatIds.has(t.categoryId)).reduce((s, t) => s + t.amount, 0)
   const realExpense = expenseAll - invest
   const net = income - expenseAll
@@ -34,12 +28,13 @@ export default function Home() {
     .map(b => {
       const cat = categories.find(c => c.id === b.categoryId)
       if (!cat) return null
+      const kind = categoryKind(cat)
       const range = b.period === 'monthly' ? period : yearR
       const spent = transactions
         .filter(t => t.categoryId === b.categoryId)
         .filter(t => inRange(t.date, range))
         .reduce((s, t) => s + t.amount, 0)
-      return { ...b, cat, spent, vis: progressVisual(spent, b.amount, b.kind) }
+      return { ...b, cat, kind, spent, vis: progressVisual(spent, b.amount, kind) }
     })
     .filter(Boolean)
     .slice(0, 4) as any[]

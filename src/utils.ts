@@ -1,8 +1,17 @@
 // 工具函数
-import type { AppSettings, BudgetKind } from './types'
+import type { AppSettings, BudgetKind, Category } from './types'
 
 export const fmt = (n: number) =>
   new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 2 }).format(n)
+
+// 判断分类是否属于"目标类"（鼓励超额）：投资 / 现金存款 / 储蓄
+// 仅这三类视为 goal，其余一律视为 budget（不能超）
+export function categoryKind(cat: Category | undefined | null): BudgetKind {
+  if (!cat) return 'budget'
+  const name = cat.name
+  if (name.includes('投资') || name.includes('存款') || name.includes('储蓄')) return 'goal'
+  return 'budget'
+}
 
 export const pad = (n: number) => String(n).padStart(2, '0')
 

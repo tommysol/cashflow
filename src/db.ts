@@ -86,13 +86,22 @@ export async function deleteCategory(id: string) {
 export async function getBudgets(): Promise<Budget[]> {
   const db = await getDB()
   const list = (await db.getAll(STORES.budgets)) as Budget[]
-  // 兼容旧数据：没有 kind 字段则补默认值（投资/存款类视为 goal，否则 budget）
-  return list.map(b => ({ ...b, kind: b.kind || (isDefaultGoalCategory(b.categoryId) ? 'goal' : 'budget') }))
+  // 读取时一律按当前分类强制覆盖 kind（避免历史数据脏值）
+  const cats = (await db.getAll(STORES.categories)) as Category[]
+  const catMap = new Map(cats.map(c => [c.id, c]))
+  return list.map(b => {
+    const cat = catMap.get(b.categoryId)
+    const isGoal = cat && (cat.name.includes('投资') || cat.name.includes('存款') || cat.name.includes('储蓄'))
+    return { ...b, kind: isGoal ? 'goal' : 'budget' }
+  })
 }
 
 export async function saveBudget(b: Budget) {
   const db = await getDB()
-  await db.put(STORES.budgets, b)
+  // 写入时同样强制按分类决定 kind
+  const cat = (await db.get(STORES.categories, b.categoryId)) as Category | undefined
+  const isGoal = cat && (cat.name.includes('投资') || cat.name.includes('存款') || cat.name.includes('储蓄'))
+  await db.put(STORES.budgets, { ...b, kind: isGoal ? 'goal' : 'budget' })
 }
 
 export async function deleteBudget(id: string) {
@@ -166,9 +175,12 @@ export async function importAll(data: {
     tx.objectStore(STORES.settings).clear(),
   ])
   for (const c of data.categories) await tx.objectStore(STORES.categories).put(c)
-  // 旧备份的 budget 没有 kind 字段，补一下
+  // 旧备份的 budget kind 一律按分类名重新计算（避免脏数据）
+  const catMap = new Map(data.categories.map(c => [c.id, c]))
   for (const b of data.budgets) {
-    const fixed: Budget = { ...b, kind: (b as any).kind || (isDefaultGoalCategory(b.categoryId) ? 'goal' : 'budget') }
+    const cat = catMap.get(b.categoryId)
+    const isGoal = cat && (cat.name.includes('投资') || cat.name.includes('存款') || cat.name.includes('储蓄'))
+    const fixed: Budget = { ...b, kind: isGoal ? 'goal' : 'budget' }
     await tx.objectStore(STORES.budgets).put(fixed)
   }
   for (const t of data.transactions) await tx.objectStore(STORES.transactions).put(t)
