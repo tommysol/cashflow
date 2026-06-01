@@ -1,28 +1,33 @@
 import { useState } from 'react'
 import { store, useStore } from '../store'
-import { fmt, monthStr } from '../utils'
+import { fmt, getCurrentPeriod, getCurrentYearRange, inRange, kindLabel, kindSpentLabel, progressVisual } from '../utils'
 import { uid } from '../db'
-import type { Budget } from '../types'
+import type { Budget, BudgetKind } from '../types'
 
 export default function BudgetPage() {
-  const { categories, budgets, transactions } = useStore(s => s)
+  const { categories, budgets, transactions, settings } = useStore(s => s)
   const expenseCats = categories.filter(c => c.type === 'expense')
 
   const [editing, setEditing] = useState<string | null>(null)
   const [draftAmount, setDraftAmount] = useState('')
   const [draftPeriod, setDraftPeriod] = useState<'monthly' | 'yearly'>('monthly')
+  const [draftKind, setDraftKind] = useState<BudgetKind>('budget')
 
   const handleEdit = (catId: string) => {
     const b = budgets.find(x => x.categoryId === catId)
     setDraftAmount(b ? String(b.amount) : '')
     setDraftPeriod(b?.period || 'monthly')
+    // 默认 kind：投资/存款类自动判断；其他默认 budget
+    const cat = categories.find(c => c.id === catId)
+    const defaultKind: BudgetKind = b?.kind
+      || (cat && (cat.name.includes('投资') || cat.name.includes('存款') || cat.name.includes('储蓄')) ? 'goal' : 'budget')
+    setDraftKind(defaultKind)
     setEditing(catId)
   }
 
   const handleSave = async (catId: string) => {
     const amount = Number(draftAmount)
     if (!amount || amount <= 0) {
-      // 删除该预算
       const exist = budgets.find(b => b.categoryId === catId)
       if (exist) await store.removeBudget(exist.id)
     } else {
@@ -32,29 +37,34 @@ export default function BudgetPage() {
         categoryId: catId,
         amount,
         period: draftPeriod,
+        kind: draftKind,
       }
       await store.upsertBudget(item)
     }
     setEditing(null)
   }
 
-  const ym = monthStr()
+  const monthRange = getCurrentPeriod(settings)
+  const yearRangeR = getCurrentYearRange(settings)
 
   return (
     <div>
       <div className="px-6 pt-12 pb-4">
-        <h2 className="text-white text-[20px] font-bold">预算</h2>
-        <p className="text-white/40 text-[12px] mt-1">为每个支出分类设置月/年预算上限</p>
+        <h2 className="text-white text-[20px] font-bold">预算与目标</h2>
+        <p className="text-white/40 text-[12px] mt-1">
+          支出类设「预算」（不超），投资/存款类设「目标」（鼓励超）
+        </p>
       </div>
 
       <div className="px-6 flex flex-col gap-3 mb-6">
         {expenseCats.map(c => {
           const b = budgets.find(x => x.categoryId === c.id)
-          const spent = transactions
+          const range = !b ? null : (b.period === 'monthly' ? monthRange : yearRangeR)
+          const spent = !b ? 0 : transactions
             .filter(t => t.categoryId === c.id)
-            .filter(t => !b || (b.period === 'monthly' ? t.date.startsWith(ym) : t.date.startsWith(ym.slice(0, 4))))
+            .filter(t => inRange(t.date, range!))
             .reduce((s, t) => s + t.amount, 0)
-          const pct = b ? Math.min(100, (spent / b.amount) * 100) : 0
+          const vis = b ? progressVisual(spent, b.amount, b.kind) : null
           const isEditing = editing === c.id
 
           return (
@@ -65,6 +75,17 @@ export default function BudgetPage() {
                 <div className="flex items-center gap-2.5">
                   <div className="w-2 h-2 rounded-full" style={{ background: c.color }} />
                   <span className="text-white/90 text-[14px] font-medium">{c.name}</span>
+                  {b && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded"
+                      style={
+                        b.kind === 'goal'
+                          ? { background: 'rgba(52,211,153,0.15)', color: '#34D399' }
+                          : { background: 'rgba(99,102,241,0.15)', color: '#818CF8' }
+                      }
+                    >
+                      {b.kind === 'goal' ? '目标' : '预算'}
+                    </span>
+                  )}
                 </div>
                 {!isEditing && (
                   <button onClick={() => handleEdit(c.id)} className="text-brand-light text-[12px]">
@@ -75,6 +96,24 @@ export default function BudgetPage() {
 
               {isEditing ? (
                 <div className="flex flex-col gap-3">
+                  {/* kind 选择 */}
+                  <div className="flex p-1 rounded-lg border border-white/[.08]" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                    {(['budget', 'goal'] as BudgetKind[]).map(k => (
+                      <button
+                        key={k}
+                        onClick={() => setDraftKind(k)}
+                        className="flex-1 py-1.5 rounded-md text-[12px]"
+                        style={
+                          draftKind === k
+                            ? k === 'goal'
+                              ? { background: 'linear-gradient(135deg, #10B981, #34D399)', color: '#fff', fontWeight: 500 }
+                              : { background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff', fontWeight: 500 }
+                            : { color: 'rgba(255,255,255,0.5)' }
+                        }
+                      >{k === 'budget' ? '预算（限额）' : '目标（鼓励超）'}</button>
+                    ))}
+                  </div>
+                  {/* period 选择 */}
                   <div className="flex p-1 rounded-lg border border-white/[.08]" style={{ background: 'rgba(255,255,255,0.05)' }}>
                     {(['monthly', 'yearly'] as const).map(p => (
                       <button
@@ -83,7 +122,7 @@ export default function BudgetPage() {
                         className="flex-1 py-1.5 rounded-md text-[12px]"
                         style={
                           draftPeriod === p
-                            ? { background: 'linear-gradient(135deg, #6366F1, #8B5CF6)', color: '#fff', fontWeight: 500 }
+                            ? { background: 'rgba(255,255,255,0.1)', color: '#fff', fontWeight: 500 }
                             : { color: 'rgba(255,255,255,0.5)' }
                         }
                       >{p === 'monthly' ? '月度' : '年度'}</button>
@@ -98,7 +137,7 @@ export default function BudgetPage() {
                       inputMode="decimal"
                       value={draftAmount}
                       onChange={e => setDraftAmount(e.target.value.replace(/[^\d.]/g, ''))}
-                      placeholder="预算金额（清空则取消）"
+                      placeholder={draftKind === 'budget' ? '预算上限（清空则取消）' : '目标金额（清空则取消）'}
                       className="flex-1 text-white text-[14px] placeholder-white/30"
                     />
                   </div>
@@ -109,28 +148,23 @@ export default function BudgetPage() {
                       style={{ background: 'linear-gradient(135deg, #6366F1, #8B5CF6)' }}>保存</button>
                   </div>
                 </div>
-              ) : b ? (
+              ) : b && vis ? (
                 <div>
                   <div className="flex justify-between items-baseline mb-2">
                     <span className="text-white/50 text-[12px]">
-                      已用 ¥{fmt(spent)} / {b.period === 'monthly' ? '月' : '年'}预算 ¥{fmt(b.amount)}
+                      {kindSpentLabel(b.kind)} ¥{fmt(spent)} / {kindLabel(b.kind, b.period)} ¥{fmt(b.amount)}
                     </span>
-                    <span className="text-[13px] font-medium"
-                      style={{ color: pct >= 95 ? '#F87171' : pct >= 75 ? '#FBBF24' : '#818CF8' }}
-                    >{pct.toFixed(0)}%</span>
+                    <span className="text-[13px] font-medium" style={{ color: vis.color }}>
+                      {vis.pct.toFixed(0)}%{vis.status === 'success' ? ' ✓' : ''}
+                    </span>
                   </div>
                   <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
-                    <div
-                      className="h-full rounded-full transition-all"
-                      style={{
-                        width: `${pct}%`,
-                        background:
-                          pct >= 95 ? 'linear-gradient(90deg, #EF4444, #F87171)'
-                          : pct >= 75 ? 'linear-gradient(90deg, #F59E0B, #FBBF24)'
-                          : 'linear-gradient(90deg, #6366F1, #818CF8)',
-                      }}
-                    />
+                    <div className="h-full rounded-full transition-all"
+                      style={{ width: `${vis.pctClamped}%`, background: vis.gradient }} />
                   </div>
+                  {b.kind === 'goal' && range && (
+                    <p className="text-white/30 text-[11px] mt-2">{range.label}</p>
+                  )}
                 </div>
               ) : (
                 <p className="text-white/30 text-[12px]">未设置</p>

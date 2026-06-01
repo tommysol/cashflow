@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { store, useStore } from '../store'
-import { fmt, monthStr, todayStr } from '../utils'
+import { fmt, getCurrentPeriod, getCurrentYearRange, inRange, todayStr } from '../utils'
 import { uid } from '../db'
 import type { TxType } from '../types'
 
 export default function AddTx() {
   const nav = useNavigate()
-  const { categories, budgets, transactions } = useStore(s => s)
+  const { categories, budgets, transactions, settings } = useStore(s => s)
   const [type, setType] = useState<TxType>('expense')
   const [amount, setAmount] = useState('')
   const [categoryId, setCategoryId] = useState('')
@@ -18,20 +18,20 @@ export default function AddTx() {
   const typeCats = categories.filter(c => c.type === type)
   const currentCat = typeCats.find(c => c.id === categoryId)
 
-  // 当前分类预算剩余
+  // 当前分类的预算/目标提示
   const budgetHint = useMemo(() => {
     if (!categoryId) return null
     const b = budgets.find(x => x.categoryId === categoryId)
     if (!b) return null
-    const ym = monthStr()
+    const range = b.period === 'monthly' ? getCurrentPeriod(settings) : getCurrentYearRange(settings)
     const spent = transactions
       .filter(t => t.categoryId === categoryId)
-      .filter(t => b.period === 'monthly' ? t.date.startsWith(ym) : t.date.startsWith(ym.slice(0, 4)))
+      .filter(t => inRange(t.date, range))
       .reduce((s, t) => s + t.amount, 0)
     const remaining = b.amount - spent
     const pct = (spent / b.amount) * 100
-    return { remaining, total: b.amount, pct, period: b.period }
-  }, [categoryId, budgets, transactions])
+    return { remaining, total: b.amount, pct, period: b.period, kind: b.kind, spent }
+  }, [categoryId, budgets, transactions, settings])
 
   const canSave = !!amount && Number(amount) > 0 && !!categoryId
 
@@ -179,26 +179,39 @@ export default function AddTx() {
         />
       </div>
 
-      {/* Budget Hint */}
-      {budgetHint && type === 'expense' && (
-        <div className="mx-6 mb-6 px-4 py-3 rounded-[12px] flex items-center gap-2.5"
-          style={
-            budgetHint.pct >= 95
-              ? { background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.15)' }
-              : budgetHint.pct >= 75
-                ? { background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.15)' }
-                : { background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.15)' }
+      {/* Budget / Goal Hint */}
+      {budgetHint && type === 'expense' && (() => {
+        const isGoal = budgetHint.kind === 'goal'
+        const periodText = budgetHint.period === 'monthly' ? '月' : '年'
+        // 配色
+        let bg: string, border: string, dot: string, color: string, text: string
+        if (isGoal) {
+          if (budgetHint.pct >= 100) {
+            bg = 'rgba(52,211,153,0.1)'; border = 'rgba(52,211,153,0.2)'; dot = '#34D399'; color = 'rgba(52,211,153,0.95)'
+            text = `${currentCat?.name}本${periodText}已达成 ¥${fmt(budgetHint.spent)} / 目标 ¥${fmt(budgetHint.total)} ✓`
+          } else {
+            bg = 'rgba(99,102,241,0.08)'; border = 'rgba(99,102,241,0.15)'; dot = '#818CF8'; color = 'rgba(129,140,248,0.9)'
+            text = `${currentCat?.name}本${periodText}已存 ¥${fmt(budgetHint.spent)} / 目标 ¥${fmt(budgetHint.total)} (${budgetHint.pct.toFixed(0)}%)`
           }
-        >
-          <div className="w-1.5 h-1.5 rounded-full"
-            style={{ background: budgetHint.pct >= 95 ? '#EF4444' : budgetHint.pct >= 75 ? '#FBBF24' : '#818CF8' }} />
-          <span className="text-[12px]"
-            style={{ color: budgetHint.pct >= 95 ? 'rgba(239,68,68,0.9)' : budgetHint.pct >= 75 ? 'rgba(251,191,36,0.9)' : 'rgba(129,140,248,0.9)' }}
-          >
-            {currentCat?.name}本{budgetHint.period === 'monthly' ? '月' : '年'}预算剩余 ¥{fmt(budgetHint.remaining)} / ¥{fmt(budgetHint.total)}
-          </span>
-        </div>
-      )}
+        } else {
+          if (budgetHint.pct >= 95) {
+            bg = 'rgba(239,68,68,0.08)'; border = 'rgba(239,68,68,0.15)'; dot = '#EF4444'; color = 'rgba(239,68,68,0.9)'
+          } else if (budgetHint.pct >= 75) {
+            bg = 'rgba(251,191,36,0.08)'; border = 'rgba(251,191,36,0.15)'; dot = '#FBBF24'; color = 'rgba(251,191,36,0.9)'
+          } else {
+            bg = 'rgba(99,102,241,0.08)'; border = 'rgba(99,102,241,0.15)'; dot = '#818CF8'; color = 'rgba(129,140,248,0.9)'
+          }
+          const remaining = Math.max(0, budgetHint.remaining)
+          text = `${currentCat?.name}本${periodText}预算剩余 ¥${fmt(remaining)} / ¥${fmt(budgetHint.total)}`
+        }
+        return (
+          <div className="mx-6 mb-6 px-4 py-3 rounded-[12px] flex items-center gap-2.5"
+            style={{ background: bg, border: `1px solid ${border}` }}>
+            <div className="w-1.5 h-1.5 rounded-full" style={{ background: dot }} />
+            <span className="text-[12px]" style={{ color }}>{text}</span>
+          </div>
+        )
+      })()}
 
       {/* Save */}
       <div className="px-6 pb-10">

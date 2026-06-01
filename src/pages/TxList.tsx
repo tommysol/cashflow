@@ -1,21 +1,23 @@
 import { useMemo, useState } from 'react'
 import { store, useStore } from '../store'
-import { fmt, monthStr, formatDateLabel, subEmoji, todayStr } from '../utils'
+import {
+  fmt, formatDateLabel, getCurrentPeriod, getPeriodByAnchor, inRange,
+  recentAnchors, subEmoji, todayStr,
+} from '../utils'
 import type { Transaction } from '../types'
 
 export default function TxList() {
-  const { categories, transactions } = useStore(s => s)
-  const [ym, setYm] = useState(monthStr())
+  const { categories, transactions, settings } = useStore(s => s)
+
+  const cur = getCurrentPeriod(settings)
+  const [anchor, setAnchor] = useState(cur.anchor)
   const [filterCat, setFilterCat] = useState<string>('all')
 
-  const yearMonths = useMemo(() => {
-    const set = new Set(transactions.map(t => t.date.slice(0, 7)))
-    set.add(monthStr())
-    return [...set].sort().reverse()
-  }, [transactions])
+  const range = useMemo(() => getPeriodByAnchor(anchor, settings), [anchor, settings])
+  const anchors = useMemo(() => recentAnchors(settings, 18), [settings, transactions.length])
 
   const filtered = transactions
-    .filter(t => t.date.startsWith(ym))
+    .filter(t => inRange(t.date, range))
     .filter(t => filterCat === 'all' || t.categoryId === filterCat)
     .sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt))
 
@@ -37,15 +39,24 @@ export default function TxList() {
       <div className="flex justify-between items-center px-6 pt-12 pb-4">
         <h2 className="text-white text-[20px] font-bold">流水</h2>
         <select
-          value={ym}
-          onChange={e => setYm(e.target.value)}
+          value={anchor}
+          onChange={e => setAnchor(e.target.value)}
           className="px-3 py-1.5 rounded-lg border border-white/[.08] text-white/85 text-[13px]"
           style={{ background: 'rgba(255,255,255,0.05)' }}
         >
-          {yearMonths.map(m => (
-            <option key={m} value={m} style={{ background: '#1A1A2E' }}>{m.replace('-', '年')}月</option>
-          ))}
+          {anchors.map(a => {
+            const r = getPeriodByAnchor(a, settings)
+            return <option key={a} value={a} style={{ background: '#1A1A2E' }}>{r.label}</option>
+          })}
         </select>
+      </div>
+
+      {/* 周期范围副标 */}
+      <div className="px-6 mb-3">
+        <p className="text-white/40 text-[11px]">
+          {settings.periodMode === 'salary' ? '薪资月：' : '自然月：'}
+          {range.start} ~ {range.end}
+        </p>
       </div>
 
       {/* Summary */}
@@ -78,18 +89,21 @@ export default function TxList() {
 
       {/* List */}
       {grouped.length === 0 ? (
-        <p className="text-white/30 text-[13px] text-center py-12">本月暂无记录</p>
+        <p className="text-white/30 text-[13px] text-center py-12">本周期暂无记录</p>
       ) : (
         grouped.map(([date, txs]) => {
-          const dayTotal = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
-            - txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
+          const dayExp = txs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+          const dayInc = txs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
+          const dayNet = dayInc - dayExp
           return (
             <div key={date} className="px-6 mb-4">
               <div className="flex justify-between items-center mb-2.5">
                 <span className="text-white/40 text-[12px] font-medium">
                   {formatDateLabel(date)}{date === todayStr() ? ' · 今天' : ''}
                 </span>
-                <span className="text-white/30 text-[11px]">{dayTotal >= 0 ? '-' : '+'}{fmt(Math.abs(dayTotal))}</span>
+                <span className="text-white/30 text-[11px]">
+                  {dayNet >= 0 ? '+' : ''}{fmt(dayNet)}
+                </span>
               </div>
               <div className="flex flex-col gap-2">
                 {txs.map(t => <TxRow key={t.id} t={t} categories={categories} />)}

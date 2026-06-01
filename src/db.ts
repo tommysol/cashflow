@@ -1,13 +1,14 @@
 import { openDB, type IDBPDatabase } from 'idb'
-import type { Budget, Category, Transaction } from './types'
+import type { AppSettings, Budget, Category, Transaction } from './types'
 
 const DB_NAME = 'cashflow'
-const DB_VERSION = 1
+const DB_VERSION = 2  // v2 增加 settings store
 
 export const STORES = {
   categories: 'categories',
   budgets: 'budgets',
   transactions: 'transactions',
+  settings: 'settings',
 } as const
 
 let dbPromise: Promise<IDBPDatabase> | null = null
@@ -15,7 +16,7 @@ let dbPromise: Promise<IDBPDatabase> | null = null
 export function getDB() {
   if (!dbPromise) {
     dbPromise = openDB(DB_NAME, DB_VERSION, {
-      upgrade(db) {
+      upgrade(db, oldVersion) {
         if (!db.objectStoreNames.contains(STORES.categories)) {
           db.createObjectStore(STORES.categories, { keyPath: 'id' })
         }
@@ -26,6 +27,9 @@ export function getDB() {
           const s = db.createObjectStore(STORES.transactions, { keyPath: 'id' })
           s.createIndex('date', 'date')
           s.createIndex('categoryId', 'categoryId')
+        }
+        if (oldVersion < 2 && !db.objectStoreNames.contains(STORES.settings)) {
+          db.createObjectStore(STORES.settings, { keyPath: 'id' })
         }
       },
     })
@@ -50,6 +54,17 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: 'exp-life', type: 'expense', name: '日常生活', color: '#60A5FA', subcategories: ['餐饮', '交通', '购物', '杂项'], order: 5 },
 ]
 
+export const DEFAULT_SETTINGS: AppSettings = {
+  id: 'app',
+  periodMode: 'natural',
+  payday: 5,
+  adjustWeekend: true,
+}
+
+// 哪些默认分类初始化时是 goal 类型
+const GOAL_CATEGORY_IDS = new Set(['exp-invest', 'exp-saving'])
+export const isDefaultGoalCategory = (catId: string) => GOAL_CATEGORY_IDS.has(catId)
+
 // ============ Categories ============
 export async function getCategories(): Promise<Category[]> {
   const db = await getDB()
@@ -70,7 +85,9 @@ export async function deleteCategory(id: string) {
 // ============ Budgets ============
 export async function getBudgets(): Promise<Budget[]> {
   const db = await getDB()
-  return (await db.getAll(STORES.budgets)) as Budget[]
+  const list = (await db.getAll(STORES.budgets)) as Budget[]
+  // 兼容旧数据：没有 kind 字段则补默认值（投资/存款类视为 goal，否则 budget）
+  return list.map(b => ({ ...b, kind: b.kind || (isDefaultGoalCategory(b.categoryId) ? 'goal' : 'budget') }))
 }
 
 export async function saveBudget(b: Budget) {
@@ -83,16 +100,22 @@ export async function deleteBudget(id: string) {
   await db.delete(STORES.budgets, id)
 }
 
+// ============ Settings ============
+export async function getSettings(): Promise<AppSettings> {
+  const db = await getDB()
+  const s = (await db.get(STORES.settings, 'app')) as AppSettings | undefined
+  return s || DEFAULT_SETTINGS
+}
+
+export async function saveSettings(s: AppSettings) {
+  const db = await getDB()
+  await db.put(STORES.settings, s)
+}
+
 // ============ Transactions ============
 export async function getAllTransactions(): Promise<Transaction[]> {
   const db = await getDB()
   return (await db.getAll(STORES.transactions)) as Transaction[]
-}
-
-export async function getTransactionsByMonth(yyyymm: string): Promise<Transaction[]> {
-  const db = await getDB()
-  const all = (await db.getAll(STORES.transactions)) as Transaction[]
-  return all.filter(t => t.date.startsWith(yyyymm))
 }
 
 export async function saveTransaction(t: Transaction) {
@@ -105,7 +128,7 @@ export async function deleteTransaction(id: string) {
   await db.delete(STORES.transactions, id)
 }
 
-// ============ 初始化（首次启动写默认分类） ============
+// ============ 初始化 ============
 export async function ensureSeed() {
   const cats = await getCategories()
   if (cats.length === 0) {
@@ -114,28 +137,41 @@ export async function ensureSeed() {
     for (const c of DEFAULT_CATEGORIES) await tx.store.put(c)
     await tx.done
   }
+  // 确保 settings 存在
+  const db = await getDB()
+  const exists = await db.get(STORES.settings, 'app')
+  if (!exists) await db.put(STORES.settings, DEFAULT_SETTINGS)
 }
 
 // ============ 备份/恢复 ============
 export async function exportAll() {
-  const [categories, budgets, transactions] = await Promise.all([
+  const [categories, budgets, transactions, settings] = await Promise.all([
     getCategories(),
     getBudgets(),
     getAllTransactions(),
+    getSettings(),
   ])
-  return { version: 1, exportedAt: Date.now(), categories, budgets, transactions }
+  return { version: 2, exportedAt: Date.now(), categories, budgets, transactions, settings }
 }
 
-export async function importAll(data: { categories: Category[]; budgets: Budget[]; transactions: Transaction[] }) {
+export async function importAll(data: {
+  categories: Category[]; budgets: Budget[]; transactions: Transaction[]; settings?: AppSettings
+}) {
   const db = await getDB()
-  const tx = db.transaction([STORES.categories, STORES.budgets, STORES.transactions], 'readwrite')
+  const tx = db.transaction([STORES.categories, STORES.budgets, STORES.transactions, STORES.settings], 'readwrite')
   await Promise.all([
     tx.objectStore(STORES.categories).clear(),
     tx.objectStore(STORES.budgets).clear(),
     tx.objectStore(STORES.transactions).clear(),
+    tx.objectStore(STORES.settings).clear(),
   ])
   for (const c of data.categories) await tx.objectStore(STORES.categories).put(c)
-  for (const b of data.budgets) await tx.objectStore(STORES.budgets).put(b)
+  // 旧备份的 budget 没有 kind 字段，补一下
+  for (const b of data.budgets) {
+    const fixed: Budget = { ...b, kind: (b as any).kind || (isDefaultGoalCategory(b.categoryId) ? 'goal' : 'budget') }
+    await tx.objectStore(STORES.budgets).put(fixed)
+  }
   for (const t of data.transactions) await tx.objectStore(STORES.transactions).put(t)
+  await tx.objectStore(STORES.settings).put(data.settings || DEFAULT_SETTINGS)
   await tx.done
 }

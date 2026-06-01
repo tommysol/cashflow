@@ -1,22 +1,30 @@
 import { useEffect, useState } from 'react'
 import {
+  DEFAULT_SETTINGS,
   ensureSeed,
-  getBudgets, getCategories, getAllTransactions,
-  saveBudget, saveCategory, saveTransaction,
+  getBudgets, getCategories, getAllTransactions, getSettings,
+  saveBudget, saveCategory, saveTransaction, saveSettings,
   deleteBudget, deleteCategory, deleteTransaction,
   importAll,
 } from './db'
-import type { Budget, Category, Transaction } from './types'
+import type { AppSettings, Budget, Category, Transaction } from './types'
 
-// 极简全局 store（基于 useSyncExternalStore 思想）
+// 极简全局 store
 type State = {
   loaded: boolean
   categories: Category[]
   budgets: Budget[]
   transactions: Transaction[]
+  settings: AppSettings
 }
 
-let state: State = { loaded: false, categories: [], budgets: [], transactions: [] }
+let state: State = {
+  loaded: false,
+  categories: [],
+  budgets: [],
+  transactions: [],
+  settings: DEFAULT_SETTINGS,
+}
 const listeners = new Set<() => void>()
 const notify = () => listeners.forEach(l => l())
 const set = (patch: Partial<State>) => {
@@ -25,10 +33,10 @@ const set = (patch: Partial<State>) => {
 }
 
 async function refreshAll() {
-  const [categories, budgets, transactions] = await Promise.all([
-    getCategories(), getBudgets(), getAllTransactions(),
+  const [categories, budgets, transactions, settings] = await Promise.all([
+    getCategories(), getBudgets(), getAllTransactions(), getSettings(),
   ])
-  set({ categories, budgets, transactions, loaded: true })
+  set({ categories, budgets, transactions, settings, loaded: true })
 }
 
 export async function bootstrap() {
@@ -49,6 +57,7 @@ export const store = {
   async removeBudget(id: string) { await deleteBudget(id); await refreshAll() },
   async upsertTransaction(t: Transaction) { await saveTransaction(t); await refreshAll() },
   async removeTransaction(id: string) { await deleteTransaction(id); await refreshAll() },
+  async updateSettings(s: AppSettings) { await saveSettings(s); await refreshAll() },
   async restore(data: any) { await importAll(data); await refreshAll() },
 }
 
